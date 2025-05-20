@@ -6,7 +6,7 @@ CFLAGS = -std=c2x -Wall -Wextra -Wpedantic -pedantic-errors -fanalyzer -Wanalyze
 LDLIBS +=
 LDFLAGS +=
 
-.PHONY: all c clean val
+.PHONY: all c clean
 .DELETE_ON_ERROR:
 .ONESHELL:
 
@@ -16,11 +16,5 @@ main: main.o threadpool.o threadpool.h
 main.o: main.c threadpool.h
 threadpool.o: threadpool.c threadpool.h
 
-task.test: task.test.c threadpool.o threadpool.h
-
 c clean:
 	rm -rvf main $(wildcard *.test) $(wildcard *.o)
-
-val:
-	$(MAKE) all
-	valgrind --leak-check=yes ./main
