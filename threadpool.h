@@ -32,10 +32,19 @@ typedef struct taskqueue {
 tqnode * tqnode_init(tqnode *next, tqnode *prev, task *tsk);
 void tqnode_free(void *tqn);
 
+int taskqueue_handlefirst(taskqueue *tq, task *tsk);
+
 #endif
 
 task * task_init(gcallback callback, fcallback freecb, void *data);
 void task_free(void *tsk);
 int task_fire(task *tsk);
+
+taskqueue * taskqueue_init(void);                   // Create a FIFO queue of task objects
+void taskqueue_free(void *tq);                      // Free a taskqueue
+int taskqueue_push(taskqueue *tq, task *tsk);       // Push a task onto the queue
+task * taskqueue_pop(taskqueue *tq);                // Pop a task from the queue
+int taskqueue_pushfront(taskqueue *tq, task *tsk);  // Push a task to the front of the queue (append, task becomes first in line to be popped)
+task * taskqueue_popback(taskqueue *tq);            // Pop a task from the back of the queue (pop the most recently (normally) pushed item)
 
 #endif
