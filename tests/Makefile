@@ -21,14 +21,16 @@ COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) -c
 
 val:
 	$(MAKE) all
-	find . -iname "*.test" -exec valgrind --leak-check=yes ./{} \;
+	find . -iname "*.test" -exec valgrind --leak-check=yes {} \;
 
 
 all: $(TGTS)
 objs: $(OBJS)
 
+# Tried making a custom rule for these but it kept breaking. I'll get to it eventually
 task.test: task.test.o ../threadpool.o
 tqn.test: tqn.test.o ../threadpool.o
+taskqueue.test: taskqueue.test.o ../threadpool.o
 
 ../threadpool.o:
 	$(MAKE) -C .. threadpool.o

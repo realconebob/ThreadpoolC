@@ -1,5 +1,6 @@
 #include "threadpool.h"
 
+#include <asm-generic/errno-base.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <error.h>
@@ -55,6 +56,12 @@ int task_fire(task *tsk) {
     return tsk->callback(tsk->data);
 }
 
+int task_fired(task *tsk) {
+    int retval = task_fire(tsk);
+    if(errno == EINVAL && retval == -1) {return -1;}
+    task_free(tsk);
+    return retval;
+}
 
 
 tqnode * tqnode_init(tqnode *next, tqnode *prev, task *tsk) {
