@@ -16,9 +16,6 @@ typedef struct taskqueue taskqueue;
 // A concurrent taskqueue
 typedef struct ctqueue ctqueue;
 
-// A locally defined structure designed for easier function cleanup
-typedef struct cl cleanup;
-
 #else
 // For when testing requires knowledge of the structure's insides
 
@@ -51,19 +48,20 @@ typedef struct ctqueue {
     int tasize;
 } ctqueue;
 
-typedef struct cl {
-    fcallback *callbacks;   // Actual Type: fcallback callbacks[]
-    void * *arguments;      // Actual Type: void *arguments[]
-    int size;
-    int used;
-} cleanup;
-
 tqnode * tqnode_init(tqnode *next, tqnode *prev, task *tsk);
 void tqnode_free(void *tqn);
 
 int taskqueue_handlefirst(taskqueue *tq, task *tsk);
 
 #endif
+
+// A locally defined structure designed for easier function cleanup
+typedef struct cl {
+    fcallback *callbacks;   // Actual Type: fcallback callbacks[]
+    void * *arguments;      // Actual Type: void *arguments[]
+    int size;
+    int used;
+} cleanup;
 
 int cleanup_init(cleanup *loc, fcallback callbacks[], void *arguments[], int size);
 int cleanup_register(cleanup *loc, fcallback cb, void *arg);

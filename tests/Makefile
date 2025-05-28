@@ -32,6 +32,7 @@ objs: $(OBJS)
 task.test: task.test.o ../threadpool.o
 tqn.test: tqn.test.o ../threadpool.o
 taskqueue.test: taskqueue.test.o ../threadpool.o
+cleanup.test: cleanup.test.o ../threadpool.o
 
 ../threadpool.o:
 	$(MAKE) -C .. threadpool.o

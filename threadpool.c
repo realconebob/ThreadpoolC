@@ -34,13 +34,6 @@ typedef struct ctqueue {
     int tasize;
 } ctqueue;
 
-typedef struct cl {
-    fcallback *callbacks;   // Actual Type: fcallback callbacks[]
-    void * *arguments;      // Actual Type: void *arguments[]
-    int size;
-    int used;
-} cleanup;
-
 #endif
 
 
@@ -59,7 +52,7 @@ int cleanup_init(cleanup *loc, fcallback callbacks[], void *arguments[], int siz
 // registers if flag is NOT set
 int cleanup_register(cleanup *loc, fcallback cb, void *arg) {
     if(!loc || !cb) {errno = EINVAL; return -1;}
-    if(loc->used == loc->size) {errno = ENOMEM; return -1;}
+    if(loc->used >= loc->size || loc->used < 0) {errno = ENOMEM; return -1;}
 
     loc->callbacks[loc->used] = cb;
     loc->arguments[loc->used] = arg;
@@ -80,6 +73,8 @@ int cleanup_clear(cleanup *loc) {
     loc->used = 0;
     return 0;
 }
+/* I know very well that this isn't "clearing", but that's fine, as I basically never intend to clear the stack, and assume that 
+// you'd keep a reference instead of pawning it off on this (which would be dumb because of the lack of retrieval functions) */
 
 int cleanup_fire(cleanup *loc) {
     if(!loc) {errno = EINVAL; return -1;}
@@ -92,6 +87,7 @@ int cleanup_fire(cleanup *loc) {
 
         loc->callbacks[i](loc->arguments[i]);
     }
+    cleanup_clear(loc);
 
     return 0;
 }
@@ -343,7 +339,7 @@ ctqueue * ctqueue_init(int size) {
     
     cleanup_CNDEXEC(
         ctq->thrdarr = calloc(ctq->tasize, sizeof(thrd_t));
-        if(!ctq->thrdarr);
+        if(!ctq->thrdarr)
             cleanup_MARK();
         cleanup_CNDREGISTER(free, ctq->thrdarr);
     )
@@ -355,12 +351,41 @@ ctqueue * ctqueue_init(int size) {
     return ctq;
 }
 
+int ctqueue_cancel(ctqueue *ctq) {
+    if(!ctq) {errno = EINVAL; return -1;}
+    
+    mtx_lock(&ctq->mutex);
+    if(ctq->canceled) {
+        mtx_unlock(&ctq->mutex);
+        return 0;
+    }
+
+    ctq->canceled = 1;
+    mtx_unlock(&ctq->mutex);
+    cnd_broadcast(&ctq->cond);
+
+    return 0;
+}
+
 void ctqueue_free(void *ctq) {
     if(!ctq)
         return;
 
     ctqueue *real = (ctqueue *)ctq;
-    // TODO: Implement 
+    ctqueue_cancel(real);
+
+    // Not sure if I want to / should block on the mutex or not. I believe it would cause a deadlock if I did (consumer waiting on mutex, free waiting on consumer to quit)
+    for(int i = 0; i < real->tasize; i++)
+        thrd_join(real->thrdarr[i], NULL);
+
+    // Threads are dead, everything's free game
+    mtx_destroy(&real->mutex);
+    cnd_destroy(&real->cond);
+    taskqueue_free(real->tq);
+    free(real->thrdarr);
+    free(real);
+
+    // TODO: figure out how to do error handling for each individual data member, if necessary
 
     return;
 }
