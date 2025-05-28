@@ -13,6 +13,12 @@ typedef struct task task;
 // A doubly-linked list (queue) of task objects
 typedef struct taskqueue taskqueue;
 
+// A concurrent taskqueue
+typedef struct ctqueue ctqueue;
+
+// A locally defined structure designed for easier function cleanup
+typedef struct cl cleanup;
+
 #else
 // For when testing requires knowledge of the structure's insides
 
@@ -34,12 +40,54 @@ typedef struct taskqueue {
     unsigned int size;
 } taskqueue;
 
+#include <threads.h>
+typedef struct ctqueue {
+    mtx_t mutex;
+    cnd_t cond;
+    unsigned char canceled;
+
+    taskqueue *tq;
+    thrd_t *thrdarr;
+    int tasize;
+} ctqueue;
+
+typedef struct cl {
+    fcallback *callbacks;   // Actual Type: fcallback callbacks[]
+    void * *arguments;      // Actual Type: void *arguments[]
+    int size;
+    int used;
+} cleanup;
+
 tqnode * tqnode_init(tqnode *next, tqnode *prev, task *tsk);
 void tqnode_free(void *tqn);
 
 int taskqueue_handlefirst(taskqueue *tq, task *tsk);
 
 #endif
+
+int cleanup_init(cleanup *loc, fcallback callbacks[], void *arguments[], int size);
+int cleanup_register(cleanup *loc, fcallback cb, void *arg);
+int cleanup_cndregister(cleanup *loc, fcallback cb, void *arg, unsigned char flag);
+int cleanup_clear(cleanup *loc);
+int cleanup_fire(cleanup *loc);
+int cleanup_cndfire(cleanup *loc, unsigned char flag);
+
+#define cleanup_CREATE(size) \
+cleanup __CLEANUP; \
+fcallback __CLEANUP_FUNCS[(size)]; \
+void *__CLEANUP_ARGS[(size)]; \
+unsigned char __FLAG = 0; \
+cleanup_init(&__CLEANUP, __CLEANUP_FUNCS, __CLEANUP_ARGS, (size))
+
+#define cleanup_REGISTER(cb, arg)       cleanup_register(&__CLEANUP, (cb), (arg))
+#define cleanup_CNDREGISTER(cb, arg)    cleanup_cndregister(&__CLEANUP, (cb), (arg), __FLAG)
+#define cleanup_CLEAR()                 cleanup_clear(&__CLEANUP)
+#define cleanup_FIRE()                  cleanup_fire(&__CLEANUP)
+#define cleanup_CNDFIRE()               cleanup_cndfire(&__CLEANUP, __FLAG)
+#define cleanup_MARK()                  (__FLAG = 1)
+#define cleanup_UNMARK()                (__FLAG = 0)
+#define cleanup_ERRORFLAGGED            (__FLAG != 0)
+#define cleanup_CNDEXEC(code)           while(!cleanup_ERRORFLAGGED) {code; break;}
 
 // Create a new task. Sets `errno` and returns `NULL` on error
 task * task_init(gcallback callback, fcallback freecb, void *data);

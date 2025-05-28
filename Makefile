@@ -17,4 +17,4 @@ main.o: main.c threadpool.h
 threadpool.o: threadpool.c threadpool.h
 
 c clean:
-	rm -rvf main $(wildcard *.test) $(wildcard *.o)
+	rm -rvf main $(wildcard *.o)

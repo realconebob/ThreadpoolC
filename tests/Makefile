@@ -18,6 +18,7 @@ DEPDIR := .
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEPDIR)/$*.d
 
 COMPILE.c = $(CC) $(DEPFLAGS) $(CFLAGS) -c
+RM.shell = rm -v
 
 val:
 	$(MAKE) all
@@ -47,8 +48,11 @@ $(DEPFILES):
 include $(wildcard $(DEPFILES))
 
 c clean:
-	rm -rvf $(TGTS) $(DEPFILES) $(wildcard *.o)
-
+	-if [ ! -z "$(DEPDIR)" ] && [ "$(DEPDIR)" != "." ]; then
+		$(RM.shell) $(DEPDIR)
+	fi
+	$(RM.shell) -f $(TGTS) $(DEPFILES) $(wildcard *.o)
+	$(MAKE) -C .. clean
 
 # Automatic dependency generation shamelessly borrowed and hamfistedly butchered from Paul D. Smith, via https://make.mad-scientist.net/papers/advanced-auto-dependency-generation/
 # Thanks Paul!

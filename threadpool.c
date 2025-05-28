@@ -1,6 +1,6 @@
 #include "threadpool.h"
 
-#include <asm-generic/errno-base.h>
+#include <threads.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <error.h>
@@ -23,7 +23,87 @@ typedef struct taskqueue {
     tqnode *end;
     unsigned int size;
 } taskqueue;
+
+typedef struct ctqueue {
+    mtx_t mutex;
+    cnd_t cond;
+    unsigned char canceled;
+
+    taskqueue *tq;
+    thrd_t *thrdarr;
+    int tasize;
+} ctqueue;
+
+typedef struct cl {
+    fcallback *callbacks;   // Actual Type: fcallback callbacks[]
+    void * *arguments;      // Actual Type: void *arguments[]
+    int size;
+    int used;
+} cleanup;
+
 #endif
+
+
+
+int cleanup_init(cleanup *loc, fcallback callbacks[], void *arguments[], int size) {
+    if(!loc || !callbacks || !arguments || size <= 0) {errno = EINVAL; return -1;}
+
+    loc->callbacks = callbacks;
+    loc->arguments = arguments;
+    loc->size = size;
+    loc->used = 0;
+
+    return 0;
+}
+
+// registers if flag is NOT set
+int cleanup_register(cleanup *loc, fcallback cb, void *arg) {
+    if(!loc || !cb) {errno = EINVAL; return -1;}
+    if(loc->used == loc->size) {errno = ENOMEM; return -1;}
+
+    loc->callbacks[loc->used] = cb;
+    loc->arguments[loc->used] = arg;
+    loc->used++;
+
+    return 0;
+}
+
+int cleanup_cndregister(cleanup *loc, fcallback cb, void *arg, unsigned char flag) {
+    if(flag)
+        return 0;
+    return cleanup_register(loc, cb, arg);
+}
+
+int cleanup_clear(cleanup *loc) {
+    if(!loc) {errno = EINVAL; return -1;}
+    
+    loc->used = 0;
+    return 0;
+}
+
+int cleanup_fire(cleanup *loc) {
+    if(!loc) {errno = EINVAL; return -1;}
+
+    for(int i = (loc->used - 1); i >= 0; i--) {
+        if(loc->callbacks[i] == NULL) {
+            error(0, EINVAL, "cleanup_fire: refusing to run null callback...");
+            continue;
+        }
+
+        loc->callbacks[i](loc->arguments[i]);
+    }
+
+    return 0;
+}
+
+// Fires if flag is set
+int cleanup_cndfire(cleanup *loc, unsigned char flag) {
+    if(flag)
+        return cleanup_fire(loc);
+    return 0;
+}
+
+
 
 task * task_init(gcallback callback, fcallback freecb, void *data) {
     if(callback == NULL) {errno = EINVAL; return NULL;}
@@ -119,11 +199,11 @@ void taskqueue_free(void *tq) {
 
 // push pop nomenclature, but slightly modified:
     // Normal:
-        // push - push to front of queue
-        // pop  - pop from end of queue
+        // push - push to back of queue
+        // pop  - pop from front of queue
     // Modified:
-        // pushback  - push to end of queue
-        // popfront - pop from front of queue
+        // pushfront  - push to front of queue
+        // popback - pop from back of queue
 
 // I could borrow the java names (iirc one of them was "offer") but I don't like java so too bad
 
@@ -216,4 +296,71 @@ task * taskqueue_popback(taskqueue *tq) {
     return ret;
 }
 
-// TODO: Test the taskqueuenode to make sure it doesn't leak memory somehow
+
+
+static void ___ucl_mtxdestroy(void *mtx) {
+    if(!mtx) return;
+    mtx_destroy((mtx_t *)mtx);
+    return;
+}
+
+static void ___ucl_cnddestroy(void *cond) {
+    if(cond) return;
+    cnd_destroy((cnd_t *)cond);
+    return;
+}
+
+ctqueue * ctqueue_init(int size) {
+    if(size <= 0) {errno = EINVAL; return NULL;}
+    cleanup_CREATE(10);
+
+    ctqueue *ctq = calloc(1, sizeof(*ctq));
+    if(!ctq)
+        return NULL;
+    cleanup_REGISTER(free, ctq);
+
+    ctq->canceled = 0;
+    ctq->tasize = size;
+
+    cleanup_CNDEXEC(
+        ctq->tq = taskqueue_init();
+        if(!ctq->tq)
+            cleanup_MARK();
+        cleanup_CNDREGISTER(taskqueue_free, ctq->tq);
+    );
+    
+    cleanup_CNDEXEC(
+        if(mtx_init(&ctq->mutex, mtx_plain) != thrd_success)
+            cleanup_MARK();
+        cleanup_CNDREGISTER(___ucl_mtxdestroy, (void*)&ctq->mutex);
+    );
+
+    cleanup_CNDEXEC(
+        if(cnd_init(&ctq->cond) != thrd_success)
+            cleanup_MARK();
+        cleanup_CNDREGISTER(___ucl_cnddestroy, (void*)&ctq->cond);
+    );
+    
+    cleanup_CNDEXEC(
+        ctq->thrdarr = calloc(ctq->tasize, sizeof(thrd_t));
+        if(!ctq->thrdarr);
+            cleanup_MARK();
+        cleanup_CNDREGISTER(free, ctq->thrdarr);
+    )
+
+    cleanup_CNDFIRE();
+    if(cleanup_ERRORFLAGGED)
+        return NULL;
+
+    return ctq;
+}
+
+void ctqueue_free(void *ctq) {
+    if(!ctq)
+        return;
+
+    ctqueue *real = (ctqueue *)ctq;
+    // TODO: Implement 
+
+    return;
+}
