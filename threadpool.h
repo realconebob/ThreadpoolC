@@ -1,59 +1,7 @@
-#ifndef ___THREADPOOL_IMPLEMENTATION_C__192741377429633___
-#define ___THREADPOOL_IMPLEMENTATION_C__192741377429633___ 1
+#ifndef ___THREADPOOL_IMPLEMENTATION_C__THREADPOOL_H__192741377429633___
+#define ___THREADPOOL_IMPLEMENTATION_C__THREADPOOL_H__192741377429633___ 1
 
-typedef int (*gcallback)(void*);    // Generic callback signature
-typedef void (*fcallback)(void*);   // free()-like callback signature
-
-#ifndef ___TPIC__NOT_OPAQUE
-// Testing opaque data structs
-
-// A task that consists of a generic callback, a free callback, and data to be used as parameters for said callbacks
-typedef struct task task;
-
-// A doubly-linked list (queue) of task objects
-typedef struct taskqueue taskqueue;
-
-// A concurrent taskqueue
-typedef struct ctqueue ctqueue;
-
-#else
-// For when testing requires knowledge of the structure's insides
-
-typedef struct task {
-    gcallback callback;
-    fcallback freecb;
-    void *data;
-} task;
-
-typedef struct tqnode {
-    struct tqnode *next;
-    struct tqnode *prev;
-    task *task;
-} tqnode;
-
-typedef struct taskqueue {
-    tqnode *start;
-    tqnode *end;
-    unsigned int size;
-} taskqueue;
-
-#include <threads.h>
-typedef struct ctqueue {
-    mtx_t mutex;
-    cnd_t cond;
-    unsigned char canceled;
-
-    taskqueue *tq;
-    thrd_t *thrdarr;
-    int tasize;
-} ctqueue;
-
-tqnode * tqnode_init(tqnode *next, tqnode *prev, task *tsk);
-void tqnode_free(void *tqn);
-
-int taskqueue_handlefirst(taskqueue *tq, task *tsk);
-
-#endif
+#include "structs.h"
 
 // A locally defined structure designed for easier function cleanup
 typedef struct cl {
@@ -118,5 +66,25 @@ int taskqueue_pushfront(taskqueue *tq, task *tsk);
 
 // Pop a task from the back of the queue (pop the most recently (normally) pushed item). Returns a task on success, sets `errno` and returns `NULL` on error
 task * taskqueue_popback(taskqueue *tq);
+
+
+
+// Create a concurrent taskqueue with `size` allocated threads
+ctqueue * ctqueue_init(int size);
+
+// Cancel a currently running ctq
+int ctqueue_cancel(ctqueue *ctq);
+
+// Free a ctq (cancels any remaining operations)
+void ctqueue_free(void *ctq);
+
+// Push a new task to the queue, waiting via mutex to do so
+int ctqueue_waitpush(ctqueue *ctq, task *tsk);
+
+// Pop a task from the queue, waiting via mutex to do so
+task * ctqueue_waitpop(ctqueue *ctq);
+
+// Spawn the allocated threads for a ctq
+int ctqueue_start(ctqueue *ctq);
 
 #endif

@@ -1,40 +1,12 @@
+#define ___TPIC__NOT_OPAQUE
+#include "structs.h"
+#undef ___TPIC__NOT_OPAQUE
 #include "threadpool.h"
 
 #include <threads.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <error.h>
-
-#ifndef ___TPIC__NOT_OPAQUE
-typedef struct task {
-    gcallback callback;
-    fcallback freecb;
-    void *data;
-} task;
-
-typedef struct tqnode {
-    struct tqnode *next;
-    struct tqnode *prev;
-    task *task;
-} tqnode;
-
-typedef struct taskqueue {
-    tqnode *start;
-    tqnode *end;
-    unsigned int size;
-} taskqueue;
-
-typedef struct ctqueue {
-    mtx_t mutex;
-    cnd_t cond;
-    unsigned char canceled;
-
-    taskqueue *tq;
-    thrd_t *thrdarr;
-    int tasize;
-} ctqueue;
-
-#endif
 
 
 
@@ -292,7 +264,27 @@ task * taskqueue_popback(taskqueue *tq) {
     return ret;
 }
 
+int taskqueue_size(taskqueue *tq) {
+    if(!tq) {errno = EINVAL; return -1;}
+    return tq->size;
+}
 
+// TODO: Consolidate push/pop functions into a single push and pop function respectively, then expose push/pop front/back behavior with helper functions
+
+
+
+// Internal helper macro for ctq functions. Acquires a lock via the ctq's mutex, checks to see if the queue has been canceled, then executes "code" as written
+#define __CTQ_INLOCK(ctq, retval, code) do {\
+    mtx_lock(&(ctq)->mutex); \
+    if((ctq)->canceled) { \
+        errno = ECANCELED; \
+        mtx_unlock(&(ctq)->mutex); \
+        return (retval); \
+    } \
+    \
+    code \
+    mtx_unlock(&(ctq)->mutex); \
+} while (0)
 
 static void ___ucl_mtxdestroy(void *mtx) {
     if(!mtx) return;
@@ -306,9 +298,9 @@ static void ___ucl_cnddestroy(void *cond) {
     return;
 }
 
-ctqueue * ctqueue_init(int size) {
-    if(size <= 0) {errno = EINVAL; return NULL;}
-    cleanup_CREATE(10);
+ctqueue * ctqueue_init(int nthreads) {
+    if(nthreads <= 0) {errno = EINVAL; return NULL;}
+    cleanup_CREATE(6);
 
     ctqueue *ctq = calloc(1, sizeof(*ctq));
     if(!ctq)
@@ -316,7 +308,7 @@ ctqueue * ctqueue_init(int size) {
     cleanup_REGISTER(free, ctq);
 
     ctq->canceled = 0;
-    ctq->tasize = size;
+    ctq->talen = nthreads;
 
     cleanup_CNDEXEC(
         ctq->tq = taskqueue_init();
@@ -338,7 +330,7 @@ ctqueue * ctqueue_init(int size) {
     );
     
     cleanup_CNDEXEC(
-        ctq->thrdarr = calloc(ctq->tasize, sizeof(thrd_t));
+        ctq->thrdarr = calloc(ctq->talen, sizeof(thrd_t));
         if(!ctq->thrdarr)
             cleanup_MARK();
         cleanup_CNDREGISTER(free, ctq->thrdarr);
@@ -353,15 +345,10 @@ ctqueue * ctqueue_init(int size) {
 
 int ctqueue_cancel(ctqueue *ctq) {
     if(!ctq) {errno = EINVAL; return -1;}
-    
-    mtx_lock(&ctq->mutex);
-    if(ctq->canceled) {
-        mtx_unlock(&ctq->mutex);
-        return 0;
-    }
 
-    ctq->canceled = 1;
-    mtx_unlock(&ctq->mutex);
+    __CTQ_INLOCK(ctq, 1, 
+        ctq->canceled = 1;
+    );
     cnd_broadcast(&ctq->cond);
 
     return 0;
@@ -375,7 +362,7 @@ void ctqueue_free(void *ctq) {
     ctqueue_cancel(real);
 
     // Not sure if I want to / should block on the mutex or not. I believe it would cause a deadlock if I did (consumer waiting on mutex, free waiting on consumer to quit)
-    for(int i = 0; i < real->tasize; i++)
+    for(int i = 0; i < real->talen; i++)
         thrd_join(real->thrdarr[i], NULL);
 
     // Threads are dead, everything's free game
@@ -388,4 +375,68 @@ void ctqueue_free(void *ctq) {
     // TODO: figure out how to do error handling for each individual data member, if necessary
 
     return;
+}
+
+int ctqueue_waitpush(ctqueue *ctq, task *tsk) {
+    if(!ctq || !tsk) {errno = EINVAL; return -1;}
+    int retval = 0;
+
+    __CTQ_INLOCK(ctq, -1, 
+        retval = taskqueue_push(ctq->tq, tsk);
+    );
+    if(retval == 0)
+        cnd_signal(&ctq->cond);
+
+    return retval;
+}
+
+task * ctqueue_waitpop(ctqueue *ctq) {
+    if(!ctq) {errno = EINVAL; return NULL;}
+    task *retval = NULL;
+
+    __CTQ_INLOCK(ctq, NULL, 
+        while(taskqueue_size(ctq->tq) == 0 && !ctq->canceled)
+            cnd_wait(&ctq->cond, &ctq->mutex);
+
+        if(ctq->canceled) {
+            errno = ECANCELED;
+            mtx_unlock(&ctq->mutex);
+            return NULL;
+        }
+
+        retval = taskqueue_pop(ctq->tq);
+    );
+
+    return retval;
+}
+
+static int __CTQ_CONSUMER(void *ctq) {
+    if(!ctq) {errno = EINVAL; thrd_exit(-1);}
+    ctqueue *real = (ctqueue *)ctq; 
+
+    for(task *ctask = NULL;;) {
+        ctask = ctqueue_waitpop(real);
+        if(!ctask)
+            break;
+
+        task_fire(ctask);
+    }
+
+    thrd_exit(1); // non-zero indicates error, -1 indicates invalid argument
+}
+
+int ctqueue_start(ctqueue *ctq) {
+    if(!ctq) {errno = EINVAL; return -1;}
+
+    ctq->canceled = 0;
+    
+    int retval = 0;
+    for(int i = 0; i < ctq->talen; i++)
+        if((retval = thrd_create(&ctq->thrdarr[i], __CTQ_CONSUMER, ctq)) != thrd_success)
+            break;
+
+    if(retval != thrd_success)
+        ctqueue_cancel(ctq);
+
+    return (retval == thrd_success) ? 0 : -1;
 }
