@@ -420,6 +420,7 @@ static int __CTQ_CONSUMER(void *ctq) {
             break;
 
         task_fire(ctask);
+        task_free(ctask);
     }
 
     thrd_exit(1); // non-zero indicates error, -1 indicates invalid argument
