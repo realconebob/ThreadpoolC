@@ -1,5 +1,7 @@
 #define ___TPIC__NOT_OPAQUE 1
+#include "../structs.h"
 #include "../threadpool.h"
+#undef ___TPIC__NOT_OPAQUE
 
 #include <stdio.h>
 #include <stdlib.h>

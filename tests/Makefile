@@ -3,6 +3,8 @@ SHELL := /usr/bin/env
 .SHELLFLAGS := -S bash -c
 
 CFLAGS = -std=c2x -Wall -Wextra -Wpedantic -pedantic-errors -fanalyzer -Wanalyzer-too-complex -ggdb -g3 -O0
+
+CFLAGS +=
 LDLIBS +=
 LDFLAGS +=
 
@@ -33,6 +35,7 @@ task.test: task.test.o ../threadpool.o
 tqn.test: tqn.test.o ../threadpool.o
 taskqueue.test: taskqueue.test.o ../threadpool.o
 cleanup.test: cleanup.test.o ../threadpool.o
+ctqueue.test: ctqueue.test.o ../threadpool.o
 
 ../threadpool.o:
 	$(MAKE) -C .. threadpool.o
